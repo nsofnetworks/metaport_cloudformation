@@ -14,3 +14,5 @@
 
 <a href="https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://meta-amis.s3.ca-central-1.amazonaws.com/latest/metaport-mz-existing-vpc-latest-v5.0.template&stackName=MetaPort-MultiAZ-Deployment"><img alt="Launch Stack" src="https://cdn.rawgit.com/buildkite/cloudformation-launch-stack-button-svg/master/launch-stack.svg"></a>
 
+## Important: 
+1. If you find any problems with the template, please contact your local Proofpoint Meta Security Engineer for assistance.
