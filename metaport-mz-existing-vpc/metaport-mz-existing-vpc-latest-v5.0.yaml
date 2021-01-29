@@ -1,0 +1,411 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: This template deploys a pair of Metaport connectors in private subnets across availability zones  (20201029)
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Network Configuration"
+        Parameters:
+          - VpcCidr
+          - AvailabilityZones
+          - PrivateSubnetACidr
+          - PrivateSubnetBCidr
+          - ResourcesTagName
+
+      - Label:
+          default: "MetaPort EC2 Instance Configuration"
+        Parameters:
+          - InstanceType
+          - LatestAMI
+          - KeyName
+          - SSHLocation
+          - SSMRoleAgreement
+
+      - Label:
+          default: "MetaPort Installation Token"
+        Parameters:
+          - InstallationToken1
+          - InstallationToken2
+
+    ParameterLabels:
+      VpcCidr: 
+        default: VPC ID
+      AvailabilityZones: 
+        default: Availability Zones
+      PrivateSubnetACidr:
+        default: Private subnet A CIDR
+      PrivateSubnetBCidr:
+        default: Private subnet B CIDR
+      ResourcesTagName:
+        default: Resources prefix tag
+      InstanceType:
+        default: Instance type
+      LatestAMI:
+        default: MetaPort AMI ID
+      KeyName:
+        default: Key Name
+      SSHLocation:
+        default: SSH Location
+      SSMRoleAgreement:
+        default: Sessions Manager (SSM-SM)
+      InstallationToken1:
+        default: MetaportA Installation Token
+      InstallationToken2:
+        default: MetaportB Installation Token
+
+Parameters:
+  VpcCidr:
+    Description: >- 
+      CIDR block for the VPC
+    Type: AWS::EC2::VPC::Id
+    ConstraintDescription: you must select a VPC
+  
+  AvailabilityZones:
+    Description: 'List of Availability Zones to use for the subnets in the VPC. Note:
+      The logical order is preserved.'
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+
+  PrivateSubnetACidr:
+    Description: >- 
+      CIDR block for private subnet A located in the 1st Availability Zone
+    Type: AWS::EC2::Subnet::Id
+
+  PrivateSubnetBCidr:
+    Description: >- 
+      CIDR block for private subnet B located in the 2nd Availability Zone
+    Type: AWS::EC2::Subnet::Id
+
+  ResourcesTagName:
+    Description: (optional)
+    Type: String
+
+  KeyName:
+    Description: >-
+      The EC2 Key Pair to allow SSH access to the MetaPort
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: Please choose a valid KeyName
+
+  SSHLocation:
+    Description: >-
+      The source IP address (/32) or source IP address range (x.x.x.x/x) that will be allowed to SSH to the EC2 instances
+    Type: String
+    MinLength: 9
+    MaxLength: 18
+    Default: 0.0.0.0/0
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: Must be a valid IP CIDR range of the form x.x.x.x/x
+
+  InstanceType:
+    Description: >-
+      Choose the EC2 instance type
+    Type: String
+    Default: t2.small
+    AllowedValues:
+      - c5.large
+      - c5.xlarge
+      - c5n.large
+      - c5n.xlarge
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+      - t2.xlarge
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+    ConstraintDescription: "must be a valid EC2 instance type."
+
+  LatestAMI:
+    Description: The Latest MetaPort AMI ID
+    Type: AWS::EC2::Image::Id
+
+  SSMRoleAgreement:
+    Description: Do you want to create an SSM Role for sessions manager access? (Agree/Disagree)
+    Type: String
+    Default: Agree
+    AllowedValues:
+      - Agree
+      - Disagree
+    ConstraintDescription: must be Agree or Disagree
+
+  InstallationToken1:
+    Description: >-
+      The installation token obtained from the Meta management console
+    Type: String
+    NoEcho: 'true'
+    MinLength: '8'
+    MaxLength: '255'
+    AllowedPattern: "[a-zA-Z0-9]*"
+
+  InstallationToken2:
+    Description: >-
+      The installation token obtained from the Meta management console
+    Type: String
+    NoEcho: 'true'
+    MinLength: '8'
+    MaxLength: '255'
+    AllowedPattern: "[a-zA-Z0-9]*"
+
+Conditions:
+  CreateSSMRole:
+    'Fn::Not':
+      - 'Fn::Equals':
+        - Ref: SSMRoleAgreement
+        - Disagree
+
+  ResourcesTagNameGiven:
+    'Fn::Not':
+      - 'Fn::Equals':
+          - Ref: ResourcesTagName
+          - ""
+
+Resources:
+# MetaPortA Instance Configuration
+  MetaPortA:
+    Type: AWS::EC2::Instance
+    Properties:
+      IamInstanceProfile:
+        'Fn::If':
+          - CreateSSMRole
+          - Ref: MetaPortInstanceProfile
+          - Ref: 'AWS::NoValue'
+      ImageId:
+        Ref: LatestAMI
+      InstanceType: 
+        Ref: InstanceType
+      SubnetId:
+        Ref: PrivateSubnetACidr
+      AvailabilityZone: !Select
+        - '0'
+        - !Ref AvailabilityZones
+      SecurityGroupIds: 
+        - Ref: MetaSecurityGroup
+      KeyName: 
+        Ref: KeyName
+      # Metaport Onboard Script [Provide your OTAP Code]
+      UserData:
+        Fn::Base64: !Join
+          - '\n'
+          - - !Sub |
+              #!/bin/bash
+              su mpadmin -c "metaport onboard ${InstallationToken1}"
+      Tags:
+        - Key: Name
+          Value:
+            'Fn::Join':
+              - '-'
+              - - 'Fn::If':
+                    - ResourcesTagNameGiven
+                    - Ref: ResourcesTagName
+                    - Ref: 'AWS::StackName'
+                - MetaPortA
+
+# MetaPortB Instance Configuration
+  MetaPortB:
+    Type: AWS::EC2::Instance
+    Properties:
+      IamInstanceProfile:
+        'Fn::If':
+          - CreateSSMRole
+          - Ref: MetaPortInstanceProfile
+          - Ref: 'AWS::NoValue'
+      ImageId:
+        Ref: LatestAMI
+      InstanceType:
+        Ref: InstanceType
+      SubnetId:
+        Ref: PrivateSubnetBCidr
+      AvailabilityZone: !Select
+        - '1'
+        - !Ref AvailabilityZones
+      SecurityGroupIds: 
+        - Ref: MetaSecurityGroup
+      KeyName: 
+        Ref: KeyName
+      # Metaport Onboard Script [Provide your OTAP Code]
+      UserData:
+        Fn::Base64: !Join
+          - '\n'
+          - - !Sub |
+              #!/bin/bash
+              su mpadmin -c "metaport onboard ${InstallationToken2}"
+      Tags:
+        - Key: Name
+          Value:
+            'Fn::Join':
+              - '-'
+              - - 'Fn::If':
+                    - ResourcesTagNameGiven
+                    - Ref: ResourcesTagName
+                    - Ref: 'AWS::StackName'
+                - MetaPortB
+
+# Create SSM-SM Role based on user agreement condition
+  MetaPortSSMIAMRole:
+    Type: AWS::IAM::Role
+    Condition: CreateSSMRole
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+    
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  MetaPortInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: CreateSSMRole
+    Properties:
+      Path: /
+      Roles:
+        - Ref: MetaPortSSMIAMRole
+
+# Metaport Standard Security Group
+  MetaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: MetaPort Security Group
+      VpcId:
+        Ref: VpcCidr
+      Tags:
+        - Key: Name
+          Value:
+            'Fn::Join':
+              - '-'
+              - - 'Fn::If':
+                    - ResourcesTagNameGiven
+                    - Ref: ResourcesTagName
+                    - Ref: 'AWS::StackName'
+                - MetaSecurityGroup
+
+# Metaport Inbound SSH and ICMP Security Group (Must be Connected to NaaS)
+  SecurityGroupIngressSSH:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow Inbound SSH to the MetaPort
+      GroupId: 
+        Ref: MetaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp:
+        Ref: SSHLocation
+
+  SecurityGroupIngressICMP:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow Inbound SSH to the MetaPort
+      GroupId:
+        Ref: MetaSecurityGroup
+      IpProtocol: icmp
+      FromPort: -1
+      ToPort: -1
+      CidrIp:
+        Ref: SSHLocation
+
+# Metaport Outbound IPSec Security Group
+  SecurityGroupEgressICMP:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      Description: Allow Outbound ICMP Traffic
+      GroupId:
+        Ref: MetaSecurityGroup
+      IpProtocol: icmp
+      FromPort: -1
+      ToPort: -1
+      CidrIp: 0.0.0.0/0
+
+  SecurityGroupEgressHTTPS:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      Description: Allow Outbound HTTPS Traffic
+      GroupId:
+        Ref: MetaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+
+  SecurityGroupEgressIKE:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      Description: Allow Outbound IKE Traffic
+      GroupId:
+        Ref: MetaSecurityGroup
+      IpProtocol: udp
+      FromPort: 500
+      ToPort: 500
+      CidrIp: 0.0.0.0/0
+
+  SecurityGroupEgressNATT:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      Description: Allow Outbound NAT-T Traffic
+      GroupId:
+        Ref: MetaSecurityGroup
+      IpProtocol: udp
+      FromPort: 4500
+      ToPort: 4500
+      CidrIp: 0.0.0.0/0
+
+Outputs:
+  VPCId:
+    Description: Meta VPC CIDR
+    Value:
+      Ref: VpcCidr
+
+  MetaSecurityGroup:
+    Description: Meta Security Group
+    Value:
+      Ref: MetaSecurityGroup
+
+  MetaPortAAvailabilityZone:
+    Description: MetaportA Private IP Address
+    Value:
+      'Fn::GetAtt':
+        - MetaPortA
+        - AvailabilityZone
+
+  MetaPortBAvailabilityZone:
+    Description: MetaportB Private IP Address
+    Value:
+      'Fn::GetAtt':
+        - MetaPortB
+        - AvailabilityZone
+
+  MetaPortAPrivateIPAddress:
+    Description: MetaportA Private IP Address
+    Value:
+      'Fn::GetAtt':
+        - MetaPortA
+        - PrivateIp
+
+  MetaPortBPrivateIPAddress:
+    Description: MetaportB Private IP Address
+    Value:
+      'Fn::GetAtt':
+        - MetaPortB
+        - PrivateIp
+
+  MetaPortAPrivateDnsName:
+    Description: MetaportA Private DNS Name
+    Value:
+      'Fn::GetAtt':
+        - MetaPortA
+        - PrivateDnsName
+
+  MetaPortBPrivateDnsName:
+    Description: MetaportB Private DNS Name
+    Value:
+      'Fn::GetAtt':
+        - MetaPortB
+        - PrivateDnsName
